@@ -1,0 +1,2 @@
+- ingestion optimize only one request or chunk the resquest for that mulple api dont cause 429
+- hanle 429 error 

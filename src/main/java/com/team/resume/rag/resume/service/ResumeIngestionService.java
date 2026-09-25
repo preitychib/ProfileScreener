@@ -10,6 +10,7 @@ import dev.langchain4j.data.document.loader.FileSystemDocumentLoader;
 import dev.langchain4j.data.document.parser.apache.pdfbox.ApachePdfBoxDocumentParser;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.store.embedding.EmbeddingStoreIngestor;
+import com.team.resume.rag.resume.prompt.ExtractionPrompt;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -33,23 +34,8 @@ public class ResumeIngestionService {
 
     private static final Logger log = LoggerFactory.getLogger(ResumeIngestionService.class);
 
-    private static final String EXTRACTION_PROMPT = """
-            Extract candidate metadata from the resume text below.
-            Return ONLY valid JSON with these fields:
-            {
-              "name": "full name",
-              "email": "email or empty string",
-              "profile": "job profile such as Java Developer or QA Engineer",
-              "yearsOfExperience": 5,
-              "technologies": "comma-separated technologies",
-              "graduationCgpa": 8.2,
-              "graduationPercentage": null
-            }
-            Extract graduationCgpa or graduationPercentage only from the bachelor's/graduation degree.
-            Use null when a graduation score is not present. Do not use school grades.
-            Resume text:
-            %s
-            """;
+
+    private static final String EXTRACTION_PROMPT = ExtractionPrompt.EXTRACTION_PROMPT;
 
     private final ResumeProperties resumeProperties;
     private final CandidateService candidateService;
@@ -69,16 +55,23 @@ public class ResumeIngestionService {
         this.chatModel = chatModel;
         this.objectMapper = objectMapper;
         this.pdfParser = new ApachePdfBoxDocumentParser();
+        log.info("ResumeIngestionService ready: chatModel={}, embeddingStoreIngestor={}",
+                chatModel.getClass().getName(),
+                embeddingStoreIngestor.getClass().getName());
     }
 
     public IngestResult ingestAllFromDirectory() throws IOException {
+        long startedAt = System.currentTimeMillis();
         Path directory = resolveResumeDirectory();
+        log.info("Ingestion started from directory={}", directory);
         List<String> ingested = new ArrayList<>();
         List<String> skipped = new ArrayList<>();
         List<String> errors = new ArrayList<>();
 
         if (!Files.isDirectory(directory)) {
             Files.createDirectories(directory);
+            log.info("Ingestion finished: directory was empty/missing. Took {} ms",
+                    System.currentTimeMillis() - startedAt);
             return new IngestResult(ingested, skipped, errors);
         }
 
@@ -87,10 +80,13 @@ public class ResumeIngestionService {
                     .forEach(path -> ingestPath(path, ingested, skipped, errors));
         }
 
+        log.info("Ingestion finished: ingested={}, skipped={}, errors={}, took {} ms",
+                ingested.size(), skipped.size(), errors.size(), System.currentTimeMillis() - startedAt);
         return new IngestResult(ingested, skipped, errors);
     }
 
     public IngestResult ingestUploadedFile(MultipartFile file) throws IOException {
+        long startedAt = System.currentTimeMillis();
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("PDF file is required");
         }
@@ -98,6 +94,8 @@ public class ResumeIngestionService {
             throw new IllegalArgumentException("Only PDF files are supported");
         }
 
+        log.info("Ingestion started for upload fileName={}, sizeBytes={}",
+                file.getOriginalFilename(), file.getSize());
         Path directory = resolveResumeDirectory();
         Files.createDirectories(directory);
         Path targetPath = directory.resolve(sanitizeFileName(file.getOriginalFilename()));
@@ -109,6 +107,9 @@ public class ResumeIngestionService {
         List<String> skipped = new ArrayList<>();
         List<String> errors = new ArrayList<>();
         ingestPath(targetPath, ingested, skipped, errors);
+        log.info("Ingestion finished for upload fileName={}, ingested={}, skipped={}, errors={}, took {} ms",
+                file.getOriginalFilename(), ingested.size(), skipped.size(), errors.size(),
+                System.currentTimeMillis() - startedAt);
         return new IngestResult(ingested, skipped, errors);
     }
 
@@ -119,14 +120,25 @@ public class ResumeIngestionService {
     private void ingestPath(Path path, List<String> ingested, List<String> skipped, List<String> errors) {
         String fileName = path.getFileName().toString();
         if (candidateService.existsByResumeFileName(fileName)) {
+            log.info("Skipping already-ingested resume {}", fileName);
             skipped.add(fileName);
             return;
         }
 
+        long fileStartedAt = System.currentTimeMillis();
+        log.info("Ingesting resume {}", fileName);
         try {
+            long stepAt = System.currentTimeMillis();
             Document document = FileSystemDocumentLoader.loadDocument(path, pdfParser);
+            log.info("PDF parsed for {}: chars={}, took {} ms",
+                    fileName, document.text().length(), System.currentTimeMillis() - stepAt);
+
             UUID candidateId = UUID.randomUUID();
+            stepAt = System.currentTimeMillis();
             ExtractedCandidateMetadata extracted = extractMetadata(document.text(), fileName);
+            log.info("Metadata extracted for {}: name={}, profile={}, took {} ms",
+                    fileName, extracted.name(), extracted.profile(), System.currentTimeMillis() - stepAt);
+
             Metadata metadata = Metadata.from(Map.of(
                     "candidateId", candidateId.toString(),
                     "fileName", fileName,
@@ -134,7 +146,10 @@ public class ResumeIngestionService {
                     "profile", extracted.profile()
             ));
             Document enrichedDocument = Document.from(document.text(), metadata);
+
+            stepAt = System.currentTimeMillis();
             embeddingStoreIngestor.ingest(enrichedDocument);
+            log.info("Embeddings stored for {}: took {} ms", fileName, System.currentTimeMillis() - stepAt);
 
             Candidate candidate = new Candidate(
                     candidateId,
@@ -149,15 +164,24 @@ public class ResumeIngestionService {
             );
             candidateService.save(candidate);
             ingested.add(fileName);
+            log.info("Ingested resume {} in {} ms", fileName, System.currentTimeMillis() - fileStartedAt);
         } catch (Exception exception) {
-            log.error("Failed to ingest resume {}", fileName, exception);
+            log.error("Failed to ingest resume {} after {} ms",
+                    fileName, System.currentTimeMillis() - fileStartedAt, exception);
             errors.add(fileName + ": " + exception.getMessage());
         }
     }
 
     private ExtractedCandidateMetadata extractMetadata(String resumeText, String fileName) {
         try {
+            log.info("Calling chatModel={} for metadata extraction of {}",
+                    chatModel.getClass().getSimpleName(), fileName);
+            long chatStartedAt = System.currentTimeMillis();
             String response = chatModel.chat(EXTRACTION_PROMPT.formatted(truncate(resumeText, 12000)));
+            log.info("ChatModel response for {}: chars={}, took {} ms",
+                    fileName,
+                    response == null ? 0 : response.length(),
+                    System.currentTimeMillis() - chatStartedAt);
             String json = extractJson(response);
             JsonNode node = objectMapper.readTree(json);
             return new ExtractedCandidateMetadata(

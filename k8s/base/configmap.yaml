@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: profilescreener-config
+  namespace: profilescreener
+data:
+  SERVER_PORT: "8083"
+  REDIS_HOST: "redis-stack"
+  REDIS_PORT: "6379"
+  APP_RESUMES_DIRECTORY: "/app/resumes"
+  # Overlays override LLM_PROVIDER (openai | groq-cloud-embedding | groq-local-embedding | ollama)
+  LLM_PROVIDER: "groq-local-embedding"

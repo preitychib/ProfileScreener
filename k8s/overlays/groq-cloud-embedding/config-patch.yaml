@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: profilescreener-config
+data:
+  LLM_PROVIDER: "groq-cloud-embedding"
+  GROQ_BASE_URL: "https://api.groq.com/openai/v1"
+  GROQ_CHAT_MODEL: "openai/gpt-oss-120b"
+  OPENAI_EMBEDDING_MODEL: "text-embedding-3-small"

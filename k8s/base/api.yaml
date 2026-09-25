@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: profilescreener-api
+  namespace: profilescreener
+  labels:
+    app: profilescreener-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: profilescreener-api
+  template:
+    metadata:
+      labels:
+        app: profilescreener-api
+    spec:
+      containers:
+        - name: api
+          # Build/push locally: docker build -t profilescreener-api:local .
+          image: profilescreener-api:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8083
+              name: http
+          env:
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=75.0"
+          envFrom:
+            - configMapRef:
+                name: profilescreener-config
+            - secretRef:
+                name: profilescreener-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 40
+            periodSeconds: 10
+            failureThreshold: 12
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 90
+            periodSeconds: 20
+            failureThreshold: 6
+          volumeMounts:
+            - name: resumes
+              mountPath: /app/resumes
+      volumes:
+        - name: resumes
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: profilescreener-api
+  namespace: profilescreener
+spec:
+  selector:
+    app: profilescreener-api
+  ports:
+    - name: http
+      port: 8083
+      targetPort: 8083

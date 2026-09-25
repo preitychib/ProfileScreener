@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: profilescreener-config
+data:
+  LLM_PROVIDER: "groq-local-embedding"
+  GROQ_BASE_URL: "https://api.groq.com/openai/v1"
+  GROQ_CHAT_MODEL: "openai/gpt-oss-120b"
+  OLLAMA_BASE_URL: "http://ollama:11434"
+  OLLAMA_CHAT_MODEL: "qwen3:1.7b"
+  OLLAMA_EMBEDDING_MODEL: "nomic-embed-text"

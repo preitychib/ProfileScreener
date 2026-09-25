@@ -1,0 +1,9 @@
+target/
+.git/
+.idea/
+.vscode/
+resumes/
+*.md
+.env
+k8s/
+scripts/

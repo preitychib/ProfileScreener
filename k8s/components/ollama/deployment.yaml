@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: profilescreener
+  labels:
+    app: ollama
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama
+  template:
+    metadata:
+      labels:
+        app: ollama
+    spec:
+      initContainers:
+        - name: model-loader
+          image: ollama/ollama:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              ollama serve &
+              pid=$!
+              sleep 8
+              # Bare-minimum demo models (override via env if needed)
+              ollama pull "${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}"
+              ollama pull "${OLLAMA_CHAT_MODEL:-qwen3:1.7b}"
+              kill "$pid"
+              wait "$pid" || true
+          env:
+            - name: OLLAMA_CHAT_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: profilescreener-config
+                  key: OLLAMA_CHAT_MODEL
+                  optional: true
+            - name: OLLAMA_EMBEDDING_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: profilescreener-config
+                  key: OLLAMA_EMBEDDING_MODEL
+                  optional: true
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          volumeMounts:
+            - name: models
+              mountPath: /root/.ollama
+      containers:
+        - name: ollama
+          image: ollama/ollama:latest
+          ports:
+            - containerPort: 11434
+              name: http
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1536Mi
+            limits:
+              cpu: "1"
+              memory: 3Gi
+          volumeMounts:
+            - name: models
+              mountPath: /root/.ollama
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: ollama-models
